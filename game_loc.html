@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS 尋寶遊戲</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            text-align: center;
+        }
+        .container {
+            background-color: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            width: 100%;
+        }
+        h1 {
+            color: #1a73e8;
+            font-size: 24px;
+        }
+        p {
+            line-height: 1.6;
+        }
+        .hidden {
+            display: none;
+        }
+        button {
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-top: 10px;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #1558b8;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        input[type="number"] {
+            width: calc(100% - 24px);
+            padding: 12px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        #message-area {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #e8f0fe;
+            border: 1px solid #d1e3ff;
+            color: #0d47a1;
+        }
+        #error-area {
+            margin-top: 15px;
+            color: #d93025;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>GPS 尋寶遊戲</h1>
+
+        <div id="setup-phase">
+            <p>歡迎來到 GPS 尋寶遊戲！<br>請輸入您想設定的寶藏點數量（例如：3 或 5）。</p>
+            <input type="number" id="points-input" min="1" placeholder="請輸入數量...">
+            <button onclick="startSetup()">設定寶藏點</button>
+        </div>
+
+        <div id="proposer-mode" class="hidden">
+            <h2>出題模式</h2>
+            <p id="proposer-instructions"></p>
+            <button id="set-point-btn" onclick="setTreasurePoint()">將目前位置設為寶藏點</button>
+        </div>
+
+        <div id="game-mode" class="hidden">
+            <h2>遊戲開始！</h2>
+            <p id="game-instructions"></p>
+            <button id="check-location-btn" onclick="checkLocation()">我已到達這個地點</button>
+        </div>
+        
+        <div id="message-area" class="hidden"></div>
+        <div id="error-area"></div>
+    </div>
+
+    <script>
+        // 遊戲狀態變數
+        let totalPoints = 0;
+        let treasurePoints = [];
+        let currentPointIndex = 0;
+        let settingPointIndex = 0;
+
+        // DOM 元素
+        const setupPhaseDiv = document.getElementById('setup-phase');
+        const proposerModeDiv = document.getElementById('proposer-mode');
+        const gameModeDiv = document.getElementById('game-mode');
+        
+        const proposerInstructions = document.getElementById('proposer-instructions');
+        const gameInstructions = document.getElementById('game-instructions');
+        const setPointBtn = document.getElementById('set-point-btn');
+        const checkLocationBtn = document.getElementById('check-location-btn');
+
+        const messageArea = document.getElementById('message-area');
+        const errorArea = document.getElementById('error-area');
+        
+        // 常數
+        const ARRIVAL_THRESHOLD_METERS = 25; // 判斷到達的距離閾值（公尺）
+
+        /**
+         * 1. 開始設定流程
+         */
+        function startSetup() {
+            const input = document.getElementById('points-input');
+            const points = parseInt(input.value, 10);
+
+            if (isNaN(points) || points < 1) {
+                showError("請輸入一個有效的數字（至少為 1）。");
+                return;
+            }
+
+            totalPoints = points;
+            setupPhaseDiv.classList.add('hidden');
+            proposerModeDiv.classList.remove('hidden');
+            updateProposerInstructions();
+        }
+
+        /**
+         * 2. 出題模式：更新說明
+         */
+        function updateProposerInstructions() {
+            proposerInstructions.innerText = `請移動到您想設定為第 ${settingPointIndex + 1} 個寶藏點的位置，然後按下按鈕。\n\n已設定：${settingPointIndex} / ${totalPoints}`;
+        }
+
+        /**
+         * 3. 出題模式：設定寶藏點
+         */
+        function setTreasurePoint() {
+            setPointBtn.disabled = true;
+            setPointBtn.innerText = "正在獲取位置...";
+            showError(''); // 清除舊錯誤
+
+            if (!navigator.geolocation) {
+                showError("您的瀏覽器不支援地理定位功能。");
+                setPointBtn.disabled = false;
+                setPointBtn.innerText = "將目前位置設為寶藏點";
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const { latitude, longitude } = position.coords;
+                    treasurePoints.push({ lat: latitude, lon: longitude });
+                    settingPointIndex++;
+                    
+                    showMessage(`成功設定第 ${settingPointIndex} 個寶藏點！`);
+
+                    if (settingPointIndex >= totalPoints) {
+                        // 所有點都設定完畢，開始遊戲
+                        proposerModeDiv.classList.add('hidden');
+                        gameModeDiv.classList.remove('hidden');
+                        updateGameInstructions();
+                    } else {
+                        updateProposerInstructions();
+                    }
+                    
+                    setPointBtn.disabled = false;
+                    setPointBtn.innerText = "將目前位置設為寶藏點";
+                },
+                (error) => {
+                    handleGeolocationError(error);
+                    setPointBtn.disabled = false;
+                    setPointBtn.innerText = "將目前位置設為寶藏點";
+                },
+                { enableHighAccuracy: true } // 啟用高精度模式
+            );
+        }
+
+        /**
+         * 4. 遊戲模式：更新遊戲指示
+         */
+        function updateGameInstructions() {
+            if (currentPointIndex >= totalPoints) {
+                gameInstructions.innerHTML = `<strong>恭喜你！</strong><br>已完成所有尋寶任務！`;
+                checkLocationBtn.classList.add('hidden');
+                showMessage('遊戲結束！');
+            } else {
+                gameInstructions.innerText = `請前往第 ${currentPointIndex + 1} 個寶藏點。\n到達後請按下按鈕。\n\n進度：${currentPointIndex} / ${totalPoints}`;
+            }
+        }
+        
+        /**
+         * 5. 遊戲模式：檢查目前位置是否為目標點
+         */
+        function checkLocation() {
+            checkLocationBtn.disabled = true;
+            checkLocationBtn.innerText = "正在檢查位置...";
+            showError('');
+
+            if (!navigator.geolocation) {
+                showError("您的瀏覽器不支援地理定位功能。");
+                checkLocationBtn.disabled = false;
+                checkLocationBtn.innerText = "我已到達這個地點";
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const currentLat = position.coords.latitude;
+                    const currentLon = position.coords.longitude;
+                    const targetPoint = treasurePoints[currentPointIndex];
+
+                    const distance = calculateDistance(currentLat, currentLon, targetPoint.lat, targetPoint.lon);
+                    
+                    if (distance <= ARRIVAL_THRESHOLD_METERS) {
+                        showMessage(`成功找到第 ${currentPointIndex + 1} 個寶藏點！距離目標約 ${distance.toFixed(0)} 公尺。`);
+                        currentPointIndex++;
+                        updateGameInstructions();
+                    } else {
+                        showError(`您還沒到達目標地點喔！\n目前距離目標點大約 ${distance.toFixed(0)} 公尺。`);
+                    }
+
+                    checkLocationBtn.disabled = false;
+                    checkLocationBtn.innerText = "我已到達這個地點";
+                },
+                (error) => {
+                    handleGeolocationError(error);
+                    checkLocationBtn.disabled = false;
+                    checkLocationBtn.innerText = "我已到達這個地點";
+                },
+                { enableHighAccuracy: true }
+            );
+        }
+
+        /**
+         * 工具函數：計算兩點經緯度之間的距離（Haversine 公式）
+         * @returns {number} 距離（公尺）
+         */
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // 地球半徑（公尺）
+            const φ1 = lat1 * Math.PI / 180;
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+            return R * c;
+        }
+
+        /**
+         * 工具函數：顯示訊息
+         */
+        function showMessage(msg) {
+            messageArea.innerText = msg;
+            messageArea.classList.remove('hidden');
+        }
+
+        /**
+         * 工具函數：顯示錯誤
+         */
+        function showError(msg) {
+            errorArea.innerText = msg;
+        }
+
+        /**
+         * 工具函數：處理地理定位錯誤
+         */
+        function handleGeolocationError(error) {
+            let message = "獲取位置時發生未知錯誤。";
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    message = "您拒絕了位置資訊的存取請求。請允許存取位置以繼續遊戲。";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    message = "無法獲取目前的位置資訊。";
+                    break;
+                case error.TIMEOUT:
+                    message = "獲取位置資訊超時。";
+                    break;
+            }
+            showError(message);
+        }
+    </script>
+</body>
+</html>
